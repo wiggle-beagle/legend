@@ -6,35 +6,50 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 
-public class Server implements Runnable {
-    final List<String> validPaths = List.of("/index.html", "/spring.svg", "/spring.png", "/resources.html", "/styles.css", "/app.js", "/links.html", "/forms.html", "/classic.html", "/events.html", "/events.js");
 
-    public Server() throws IOException {
-    }
+public class Server  {
+    private final List<String> validPaths = List.of("/index.html", "/spring.svg", "/spring.png", "/resources.html", "/styles.css", "/app.js", "/links.html", "/forms.html", "/classic.html", "/events.html", "/events.js");
+    private final ExecutorService threadPool;
 
-    final ServerSocket serverSocket = new ServerSocket(9999);
-    Socket socket;
-    BufferedReader in;
-    BufferedOutputStream out;
-
-    public void accept() throws IOException {
-        socket = serverSocket.accept();
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        out = new BufferedOutputStream(socket.getOutputStream());
-
+    public Server(int poolSize) {
+        this.threadPool = Executors.newFixedThreadPool(poolSize);
     }
 
 
-    public void connectionHandling() throws IOException {
-        while (true) {
+    public void accept(int port) throws IOException {
+        try (final ServerSocket serverSocket = new ServerSocket(port)) {
+            while (true) {
+                final Socket socket = serverSocket.accept();
+                threadPool.submit(() -> {
+                    try {
+                        Server.this.connectionHandling(socket);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                });
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    public void connectionHandling(Socket socket) throws IOException {
+        try (
+                socket;
+                final BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final BufferedOutputStream out = new BufferedOutputStream(socket.getOutputStream())
+        ){
+
             final String requestLine = in.readLine();
             final String[] parts = requestLine.split(" ");
 
             if (parts.length != 3) {
-                // just close socket
-                break;
+                return;
             }
 
             final String path = parts[1];
@@ -46,7 +61,7 @@ public class Server implements Runnable {
                                 "\r\n"
                 ).getBytes());
                 out.flush();
-                break;
+                return;
             }
 
             final Path filePath = Path.of(".", "public", path);
@@ -54,6 +69,8 @@ public class Server implements Runnable {
 
             // special case for classic
             if (path.equals("/classic.html")) {
+                Thread.sleep(5000);
+
                 final String template = Files.readString(filePath);
                 final byte[] content = template.replace(
                         "{time}",
@@ -68,7 +85,7 @@ public class Server implements Runnable {
                 ).getBytes());
                 out.write(content);
                 out.flush();
-                break;
+                return;
             }
 
             final long length = Files.size(filePath);
@@ -81,17 +98,11 @@ public class Server implements Runnable {
             ).getBytes());
             Files.copy(filePath, out);
             out.flush();
-        }
-    }
-
-
-    @Override
-    public void run() {
-        try {
-            connectionHandling();
-        } catch (IOException e) {
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
+
     }
+
 }
 
